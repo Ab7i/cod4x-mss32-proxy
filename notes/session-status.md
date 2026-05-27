@@ -3,7 +3,7 @@
 Updated after every execution step. Purpose: never again confuse
 "code presented for review" with "code actually built & deployed".
 
-_Last updated: 2026-05-27, after Phase 3-B verified -- Phase 3-C planning starting._
+_Last updated: 2026-05-27, after Phase 3-C.1+3-C.2 verified -- Phase 3-C.4 (hook install) pending._
 
 ## CoD4x_Client_pub (controller work -- active)
 
@@ -300,6 +300,119 @@ if that's cleaner for MP).
 So the Stage 3A `Gamepad_ApplyLeftStick` stays in gamepad.c during
 3-C development; we either gate it behind a cvar or only remove it
 after the new path is smoke-tested in a live MP match.
+
+## Phase 3-C.3 pre-flight done + Phase 3-C.1 + 3-C.2 verified (2026-05-27)
+
+- **Pre-flight (3-C.3):** `tools/ghidra-projects/DumpCallSite.java`
+  dumped 16 bytes at iw3mp `0x463D70`:
+  - `E8 1B F7 FF FF | D9 05 D8 4F C8 00 D9 C0 83 C4 04`
+  - opcode `E8` (CALL rel32), rel32 = -2277 -> target `0x463490`
+    (== expected engine CL_MouseMove). Bytes after the call show
+    `ADD ESP, 4` => `__cdecl` calling convention confirmed.
+  - VERDICT = PASS. Safe to install 5-byte JMP rel32 at this address.
+- **Phase 3-C.1 (types + cvars):** `gp_usercmd_t` typedef
+  (pragma-pack(1), full layout from iw3sp_mod's Game::usercmd_s),
+  `axesValues[6]` field added to `gp_axes_glob_t`,
+  `cvar_t` forward-declared in `gamepad_internal.h`, four shared
+  cvars made non-static + extern, two new cvars registered in
+  `gamepad.c` (`cl_gamepad_legacy_sticks` default 1,
+  `cl_gamepad_invert_pitch` default 0). Both new cvars verified
+  present in DLL via `strings cod4x_021.dll`.
+- **Phase 3-C.2 (dead code):** new file
+  `CoD4x_Client_pub/src/gamepad_move.c` (315 lines) with
+  `gp_clamp_char`, `gp_apply_stick_deadzone`, `gp_populate_axes`,
+  `gp_axis_value`, `gp_cl_gamepadmove`, `gp_cl_mousemove`. NO hook
+  install. CMakeLists.txt updated.
+- **Build (2026-05-27):** clean rebuild 68 s, exit 0, 0 new
+  warnings. DLL size 2,624,512 -> 2,627,584 (+3,072 bytes = 6 PE
+  alignment units). SHA256
+  `B92F94BBE23ECC9AAC982C8F27DE079726816F2522A4963E03A0EE0A7F649B09`.
+- **Smoke test (user):** 0 regression vs Phase 3-B. Buttons +
+  triggers identical; sticks identical (Stage 3A CL_MouseEvent /
+  arrow-key paths still in charge). Toggling
+  `cl_gamepad_legacy_sticks 0` produced no behavior change,
+  confirming the dispatcher is dead code (no hook installed).
+- **Backup:** `cod4x_021.dll.phase3c1-pre` (Phase 3-B binary).
+
+## Phase 3-C.4 -- resume brief for a fresh chat session
+
+**Goal:** Install one hook + smoke-test the new analog usercmd path.
+
+**Prerequisite state (already in master):**
+- `gp_cl_mousemove(cmd)` is defined in `gamepad_move.c` and
+  externally linked (callable from any TU), but currently
+  uncalled.
+- `cl_gamepad_legacy_sticks = 1` by default -- so even after the
+  hook is installed, the new path stays dormant until the user
+  flips the cvar to 0.
+- iw3mp `0x463D70` is verified to be `CALL 0x463490` (cdecl),
+  byte-identical to iw3sp_mod's `0x4402F7` (Stage 2 accepted).
+  See `notes/stage3d-address-map.json` ->
+  `IW3MP_CL_MOUSEMOVE_STUB_JMP`.
+
+**Exactly four code changes needed:**
+
+1. **Add hook install in `gamepad.c` `IN_StartupGamepads()`** --
+   right after the cvars are registered:
+   ```c
+   GP_HOOK_JUMP(IW3MP_CL_MOUSEMOVE_STUB_JMP, gp_cl_mousemove);
+   ```
+   This is a single line. The helper macro is already in
+   `gamepad_hooks.h`; the address is already in
+   `gamepad_internal.h`. No new files.
+
+2. **Add `#include "gamepad_hooks.h"`** at the top of
+   `gamepad.c` if not already there. (Currently it includes
+   `gamepad_internal.h` which transitively does NOT include
+   the hooks header -- check before adding.)
+
+3. **Build + deploy.** Backup as `cod4x_021.dll.phase3c4-pre`
+   (preserves the .phase3c1-pre = Phase 3-B fallback intact).
+
+4. **Smoke test sequence:**
+   1. Game launches; title bar "Call of Duty 4 X".
+   2. `\cl_gamepad 1` then `\cl_gamepad_legacy_sticks 1`
+      (the default). Press a button on the pad to set inUse=true.
+      Move the right stick: view should still drive through
+      Stage 3A's CL_MouseEvent path -- new path INACTIVE.
+   3. `\cl_gamepad_legacy_sticks 0`. Move the right stick: view
+      should now drive through `cmd->yawmove/pitchmove`. Feel
+      should be different (no acceleration curve yet -- raw
+      linear). Movement (left stick) should be smooth analog
+      instead of 8-way digital.
+   4. `\cl_gamepad_legacy_sticks 1` again -> back to Stage 3A.
+   5. Join a live CoD4x MP server with the new path active.
+      Watch for kicks / desync / "client cmd time" errors.
+
+**Risks to watch:**
+- Re-entrancy: the engine's `CL_MouseMove` (0x463490) is now
+  reachable both from our `gp_cl_mousemove` fallback AND from
+  the patched-out call site at `0x463D70`. Our fallback uses a
+  direct function-pointer call (`((cl_mousemove_fn)0x463490)`)
+  which bypasses the patched callsite -- safe, no infinite
+  recursion.
+- The patched-out instruction is part of the engine's usercmd
+  builder. If our hook target diverges in stack discipline, the
+  engine will crash on return. cdecl was pre-flight-verified.
+- MP server kicks if our writes to `cmd->forwardmove/rightmove`
+  produce values outside what a keyboard would. The diagonal-
+  normalize trick keeps the magnitude bounded by 127 (same as
+  any +forward + +moveright combo). Should be transparent.
+
+**Files to commit (Phase 3-C.4 single commit):**
+- `src/gamepad.c` (+2 lines: include + hook install)
+- A smoke-test session-status update in `mss32-proxy/notes/`.
+
+**Reference docs (read in order if cold start):**
+1. `D:\Cod4Project\PROJECT.md` (project overview)
+2. `D:\Cod4Project\mss32-proxy\notes\stage3c-port-plan.md`
+   (full Phase 3-C plan)
+3. `D:\Cod4Project\mss32-proxy\notes\stage3d-address-map.json`
+   (verified hook addresses)
+4. This file (live session status)
+
+**No need to re-read:** `gamepad.cpp` from iw3sp_mod-ref (already
+ported), Stage 2 binary-diff artifacts (already consumed).
 
 ## Stage 3B -- CoD4 Mod Tools (toolchain proven)
 

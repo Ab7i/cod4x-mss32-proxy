@@ -3,7 +3,7 @@
 Updated after every execution step. Purpose: never again confuse
 "code presented for review" with "code actually built & deployed".
 
-_Last updated: 2026-05-26, after Stage 3-A code (infrastructure only -- not yet built)._
+_Last updated: 2026-05-27, after Phase 3-B verified -- Phase 3-C planning starting._
 
 ## CoD4x_Client_pub (controller work -- active)
 
@@ -182,6 +182,124 @@ _Last updated: 2026-05-26, after Stage 3-A code (infrastructure only -- not yet 
   buttons identical to prior Stage 3A behavior. **Zero regression.**
 - **Stage 3-A status: COMPLETE.** Green light for Phase 3-B in the
   next session.
+
+## Phase 3-B started (2026-05-27, planning only)
+
+**Goal originally framed by user:** "install IN_Frame_Hk (1 of 14
+hooks) only."
+
+**Key planning findings:**
+
+- `IN_Frame_Hk` in iw3sp_mod is a 3-line adapter that calls
+  `RawMouse::IN_MouseMove()` + `IN_GamePadsMove()`. The hook target
+  iw3mp `0x576193` originally CALLed engine `IN_MouseMove` (iw3sp
+  VA `0x594730`).
+- **CoD4x already redirects iw3mp's `IN_Frame` wholesale** via
+  `SetCall(0x452A44, IN_Frame)` (sys_patch.c:1152) -- CoD4x's own
+  `IN_Frame` in `win_input.c:438` already calls `IN_GamepadsMove()`
+  (the existing Stage 3A entry). **Therefore: hook at `0x576193`
+  is superseded -- DO NOT install.**
+- Phase 3-B real work = rewriting the body of `IN_GamepadsMove()` in
+  `gamepad.c` to use the iw3sp_mod state machine
+  (`gp_state_t` + `GPad_UpdateAll` polling tree), keeping the
+  same C-symbol entry point so CoD4x's `IN_Frame` is unaware.
+- **Path-A vs Path-B fork:** Path A delivers button events via
+  `Com_QueueEvent(SE_KEY, ...)` (matches Stage 3A and adds zero new
+  engine-ABI deps). Path B writes engine `playerKeys[]` directly +
+  calls `Cbuf_AddText` by VA (iw3sp_mod-faithful but adds many
+  byte-verification tasks). **Recommendation: Path A for 3-B.**
+  Engine-ABI deep dive deferred to Stage 3-D (aim assist needs it
+  anyway).
+- New files for 3-B: `gamepad_poll.c` (~200 lines, pure XInput
+  polling logic) + `gamepad_buttons.c` (~120 lines, Path A
+  delivery). `gamepad.c` body of `IN_GamepadsMove` rewritten to call
+  them. Existing `gamepad_internal.h` / `gamepad_hooks.h` untouched
+  in 3-B (they're for Path B / future phases).
+
+**4 decisions awaiting user before code is written:**
+1. Confirm Path A (vs B) for Phase 3-B.
+2. Stub `UpdateTheButtonAHint` (menu alignment) -- empty stub +
+   `TODO: Phase 4` comment, OK?
+3. Keep `K_JOY1..K_JOY16` button mapping (Stage 3A), OK?
+4. Confirm: **no hook install in Phase 3-B**, CoD4x's `0x452A44`
+   redirect is sufficient.
+
+**Full report:** delivered inline in the session chat; will move into
+`notes/stage3-port-plan.md` Phase 3-B section after decisions land.
+
+## Phase 3-B build + deploy (2026-05-27)
+
+- **Decisions confirmed by user:** Path A (Com_QueueEvent), stub
+  UpdateTheButtonAHint, K_JOY1..16 mapping preserved, zero new hooks.
+- **Files written:**
+  - `CoD4x_Client_pub/src/gamepad_poll.c` -- 358 lines, XInput polling
+    + edge-detection state machine (mirrors iw3sp_mod GPad_Check,
+    GPad_RefreshAll, GPad_UpdateAll/Sticks/Digitals/Analogs/SticksDown,
+    GPad_GetStick/Button, IsButtonPressed/Released/RequiresUpdates).
+  - `CoD4x_Client_pub/src/gamepad_buttons.c` -- 163 lines, Path A
+    dispatch (gp_dispatch_buttons + gp_release_all), K_JOY1..K_JOY16
+    table verbatim from Stage 3A.
+- **Files modified:**
+  - `gamepad_internal.h` -- IW3MP_IN_FRAME_CALL marked SUPERSEDED;
+    Phase 3-B extern API (gp_state[], gp_raw[], gp_poll_all, ...).
+  - `gamepad.c` -- IN_GamepadsMove body cut to ~30 lines (poll ->
+    dispatch -> sticks). 8 cl_gamepad_* cvars preserved verbatim.
+    Stage 3A stick code (Apply Right/Left, ReleaseMovement) untouched.
+    Empty UpdateTheButtonAHint stub with TODO Phase 4.
+  - `CMakeLists.txt` -- +2 lines (the two new TUs).
+- **Build (2026-05-27):** clean rebuild 76 s, exit 0, 0 errors,
+  0 new warnings. Only the pre-existing _Direct3DCreate9@4 stdcall-
+  fixup linker warning, plus the pre-existing CMake-deprecation
+  warnings from the external dependencies. All 3 gamepad TUs
+  compiled cleanly.
+- **Deploy:** new SHA256
+  `03ED4012496CC0292CBF152B305C520B54E28AB0811D26DF234CFB9C4674F9BF`,
+  size 2,624,512 B (+512 vs Stage 3-A = one PE alignment unit
+  absorbing the net new code). Prior deploy backed up as
+  `cod4x_021.dll.stage3b-pre`.
+- **git:** master commit `00b37c4` pushed to
+  `Ab7i/CoD4x_Client_pub`. 5 files changed, +696 / -194 lines.
+- **Exit gate (user smoke-test):** awaiting verification of (a)
+  Stage 3A regression check (all buttons + both sticks); (b) Path A
+  confirmation via `bind JOY1 "say hello..."`; (c) hot-plug
+  detection within ~0.5 s.
+
+## Phase 3-B verified (2026-05-27, user smoke-test)
+
+- User tested with `\bind AUX1 "say hello from controller"` then
+  pressed A on the controller -- "hello from controller" appeared in
+  chat. Path A delivery confirmed end-to-end.
+- **AUX* keyname note:** CoD4x's binding command resolves both
+  `JOY1..JOY32` and `AUX1..AUX16` to the same underlying engine
+  keynum range for gamepad-class events. Our dispatch fires
+  `Com_QueueEvent(SE_KEY, K_JOY1, ...)` which the engine routes
+  through Key_Event. The bind-name parser accepts either alias, so
+  `bind AUX1 ...` and `bind JOY1 ...` both work. Documented for
+  future user instructions.
+- **Stage 3-B status: COMPLETE.** Code commit `00b37c4` pushed in
+  CoD4x_Client_pub (no separate "verified" commit -- the code is
+  unchanged from the build commit; verification recorded here in
+  the notes repo).
+
+## Phase 3-C planning starting (2026-05-27)
+
+**Goal:** replace Stage 3A's left-stick-as-arrow-keys with proper
+analog movement via `usercmd_s->forwardmove / rightmove` and route
+the right stick through usercmd viewangles (or keep CL_MouseEvent
+if that's cleaner for MP).
+
+**Read-only scope this session:** anatomy of iw3sp_mod's
+`CL_GamepadMove` + `CL_MouseMove` + hooks list, layout of
+`usercmd_s`, integration site inside CoD4x, MP-specific risks
+(usercmd timing vs server prediction), phased port plan.
+
+**Important constraint from user (preserved verbatim):**
+> لا تحذف Stage 3A الـleft stick logic قبل ما تختبر بديلها -- نخلّيها
+> كـfallback لو usercmd hook فشل.
+
+So the Stage 3A `Gamepad_ApplyLeftStick` stays in gamepad.c during
+3-C development; we either gate it behind a cvar or only remove it
+after the new path is smoke-tested in a live MP match.
 
 ## Stage 3B -- CoD4 Mod Tools (toolchain proven)
 

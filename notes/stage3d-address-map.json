@@ -1,0 +1,191 @@
+{
+  "_meta": {
+    "source": "tools/iw3sp_mod-ref/src/Components/Modules/Gamepad.cpp",
+    "purpose": "Map iw3sp_mod.exe -> iw3mp.exe addresses for porting iw3sp_mod gamepad subsystem to CoD4x_Client_pub",
+    "binaries": {
+      "iw3sp_mod.exe": { "size": 3248640, "sha256": "EDED51AC28C261FCB0E8C66D0294847323F53E3C6D8F2D2A21750D535F1DAA6B", "ghidra_functions": 7906, "image_base": "0x00400000" },
+      "iw3mp.exe":      { "size": 3330048, "sha256": "F50F8A520581754E73CB7CAE67B02ADCBAD5F2E71AAA412A013BB3EF57A391A5", "ghidra_functions": 8521, "image_base": "0x00400000" }
+    },
+    "vt_session": {
+      "name": "CoD4_SP_vs_MP",
+      "match_sets": 9,
+      "total_matches": 35039,
+      "created_by": "user via Ghidra GUI Version Tracking",
+      "matchers_applied": "Exact Function Instructions, Exact Function Mnemonics, Combined Function and Data Reference, Implied Match (auto-derived), plus more"
+    },
+    "computation_rule": "iw3mp_addr = iw3mp_function_entry + offset_in_function -- VALID ONLY for ACCEPTED matches where 'Exact Function Instructions' confirms byte-identical bodies. AVAILABLE/Implied matches need byte-level verification before trusting the offset.",
+    "status_legend": ["accepted", "implied_candidate", "no_match", "needs_review"]
+  },
+  "active_hooks": [
+    { "iw3sp_mod_addr": "0x40A0B0", "kind": "Set<const char*>", "purpose": "Reload-hint string toggle",
+      "iw3sp_mod_fn": "FUN_00409fd0 @ 0x409FD0+0xE0",
+      "iw3mp_fn_entry": "0x4237B0", "iw3mp_addr": null, "vt_status": "function_only",
+      "vt_algo": "Stage2Finish.java string-fingerprint (4/4 strings shared); offset rejected by V2 byte-verify", "vt_score": 1.000, "vt_conf": 20.000,
+      "_note": "Function identified by 4/4 strings (PLATFORM_LOW_AMMO_NO_RELOAD, PLATFORM_RELOAD, WEAPON_NO_AMMO, 'low ammo warning'). Offset 0xE0 INVALID in iw3mp (lands on non-instruction; sizes 641 vs 687 differ). Need byte-pattern search inside 0x4237B0 for the sequence around iw3sp 0x40A0B0: '20 60 68 00 E8 77 E8 FF FF 8B 0D ?? ?? ?? ?? EB' -- specifically the `push 0x680020; call rel32; mov ecx,[mem]; jmp` shape.",
+      "gamepad_cpp_line": 333 },
+
+    { "iw3sp_mod_addr": "0x43FA90", "kind": "Call<void(usercmd_s*)>", "purpose": "CL_MouseMove (called directly)",
+      "iw3sp_mod_fn": "FUN_0043fa90 @ 0x43FA90+0x0 (function entry)",
+      "iw3mp_fn_entry": "0x463490", "iw3mp_addr": "0x463490", "vt_status": "accepted",
+      "vt_algo": "Stage2Finish.java fingerprint (insn count exact: 270==270, string match)", "vt_score": 1.000, "vt_conf": 7.000,
+      "_note": "STRONG match: instruction count identical (270), sizes 951 vs 970, shared string '%f : %f\\n'. This is a call-direct (function entry), so iw3mp_addr = function entry. Critical for Stage 3D port.",
+      "gamepad_cpp_line": 963 },
+
+    { "iw3sp_mod_addr": "0x443D60", "kind": "Call<void(int,int,int,unsigned)>", "purpose": "CL_KeyEvent (called directly)",
+      "iw3sp_mod_fn": "FUN_00443d60 @ 0x443D60+0x0 (function entry)",
+      "iw3mp_fn_entry": "0x467EB0", "iw3mp_addr": "0x467EB0", "vt_status": "accepted",
+      "vt_algo": "Stage2FinishV2.java string-fingerprint (5/5 strings shared, top candidate by far)", "vt_score": 1.000, "vt_conf": 25.000,
+      "_note": "Re-confirmed after V2: all 5 unique strings shared ('+attack', '%s is unbound, use controls menu to set.', '%s %i %i\\n', '-%s %i %i\\n', 'devgui'). Earlier byte-level REJECT (V1) was due to register-allocation differences between SP and MP builds (first insn: MOV EDX vs MOV EAX), not wrong function. iw3mp body is 11% larger (1261 vs 1399 insns 381 vs 417) due to MP-specific paths. Since hook is a direct CALL to function entry, only the entry matters: 0x467EB0.",
+      "gamepad_cpp_line": 1112 },
+
+    { "iw3sp_mod_addr": "0x44367D", "kind": "Set<keyname_t*>", "purpose": "Pointer load for keyName table (#1)",
+      "iw3sp_mod_fn": "FUN_004435f0 @ 0x4435F0+0x8D",
+      "iw3mp_fn_entry": "0x4676F0", "iw3mp_addr": "0x46777D", "vt_status": "accepted",
+      "vt_algo": "Exact Function Instructions Match", "vt_score": 1.000, "vt_conf": 10.000,
+      "gamepad_cpp_line": 2105 },
+
+    { "iw3sp_mod_addr": "0x443685", "kind": "Set<keyname_t*>", "purpose": "Pointer load for keyName table (#2)",
+      "iw3sp_mod_fn": "FUN_004435f0 @ 0x4435F0+0x95",
+      "iw3mp_fn_entry": "0x4676F0", "iw3mp_addr": "0x467785", "vt_status": "accepted",
+      "vt_algo": "Exact Function Instructions Match", "vt_score": 1.000, "vt_conf": 10.000,
+      "gamepad_cpp_line": 2106 },
+
+    { "iw3sp_mod_addr": "0x443737", "kind": "Set<keyname_t*>", "purpose": "Pointer load for keyName table (#3)",
+      "iw3sp_mod_fn": "FUN_004436c0 @ 0x4436C0+0x77",
+      "iw3mp_fn_entry": "0x4677C0", "iw3mp_addr": "0x467837", "vt_status": "accepted",
+      "vt_algo": "Exact Function Instructions Match", "vt_score": 1.000, "vt_conf": 10.000,
+      "gamepad_cpp_line": 2107 },
+
+    { "iw3sp_mod_addr": "0x44372F", "kind": "HOOK_CALL", "purpose": "GetLocalizedKeyName hook (BUTTON_* names)",
+      "iw3sp_mod_fn": "FUN_004436c0 @ 0x4436C0+0x6F",
+      "iw3mp_fn_entry": "0x4677C0", "iw3mp_addr": "0x46782F", "vt_status": "accepted",
+      "vt_algo": "Exact Function Instructions Match", "vt_score": 1.000, "vt_conf": 10.000,
+      "gamepad_cpp_line": 2108 },
+
+    { "iw3sp_mod_addr": "0x447E01", "kind": "HOOK_CALL", "purpose": "Second GetLocalizedKeyName hook",
+      "iw3sp_mod_fn": "FUN_00447d70 @ 0x447D70+0x91",
+      "iw3mp_fn_entry": "0x475DC0", "iw3mp_addr": "0x475E51", "vt_status": "accepted",
+      "vt_algo": "Exact Function Instructions Match", "vt_score": 1.000, "vt_conf": 10.000,
+      "gamepad_cpp_line": 2109 },
+
+    { "iw3sp_mod_addr": "0x4402F7", "kind": "HOOK_JUMP", "purpose": "Replace mouse-move path with gamepad-aware",
+      "iw3sp_mod_fn": "FUN_004402b0 @ 0x4402B0+0x47",
+      "iw3mp_fn_entry": "0x463D10", "iw3mp_addr": "0x463D70", "vt_status": "accepted",
+      "vt_algo": "Stage2FinishV2.java caller-of-CL_MouseMove discovery", "vt_score": 1.000, "vt_conf": 9.000,
+      "_note": "Discovered via caller search: iw3sp CL_MouseMove (0x43FA90) has exactly 1 caller -> host 0x4402B0 (call site 0x4402F7). iw3mp CL_MouseMove (0x463490) also has exactly 1 caller -> host 0x463D10 (call site 0x463D70). Source offset 0x47 differs from dest offset 0x60 because MP has a different prologue (size 188 vs 238), but the SEMANTIC hook site (the call to CL_MouseMove) is 0x463D70. Hook this address directly.",
+      "gamepad_cpp_line": 2330 },
+
+    { "iw3sp_mod_addr": "0x4437E0", "kind": "HOOK_JUMP", "purpose": "Key_GetCommandAssignmentInternal hook",
+      "iw3sp_mod_fn": "FUN_004437e0 @ 0x4437E0+0x0 (function entry)",
+      "iw3mp_fn_entry": "0x4678E0", "iw3mp_addr": "0x4678E0", "vt_status": "accepted",
+      "vt_algo": "Exact Function Instructions Match", "vt_score": 1.000, "vt_conf": 10.000,
+      "gamepad_cpp_line": 2322 },
+
+    { "iw3sp_mod_addr": "0x4F92D7", "kind": "HOOK_JUMP", "purpose": "Player_UseEntity context-sensitive use",
+      "iw3sp_mod_fn": "FUN_004f92a0 @ 0x4F92A0+0x37",
+      "iw3mp_fn_entry": null, "iw3mp_addr": null, "vt_status": "no_match",
+      "vt_algo": "Implied Match REJECTED by Stage2Finish.java byte verify", "vt_score": 0.000, "vt_conf": 0.000,
+      "_note": "REJECTED: implied target 0x4EAAD0 had different size (86 vs 107), different insn count (22 vs 32), and diverging mnemonics from insn 2. Wrong function. Needs alternate discovery.",
+      "gamepad_cpp_line": 2274 },
+
+    { "iw3sp_mod_addr": "0x533B8F", "kind": "HOOK_CALL", "purpose": "CL_KeyEvent_Hk install (per-frame key router)",
+      "iw3sp_mod_fn": "FUN_00533b50 @ 0x533B50+0x3F",
+      "iw3mp_fn_entry": "0x4FDC80", "iw3mp_addr": "0x4FDCBF", "vt_status": "accepted",
+      "vt_algo": "Implied Match + Stage2Finish.java byte verify (LIKELY)", "vt_score": 1.000, "vt_conf": 8.000,
+      "_note": "Promoted from implied: 21-byte common prefix, 24 mnemonics identical, sizes 137 vs 147 close (relocations explain the diff). Trust offset 0x3F.",
+      "gamepad_cpp_line": 2308 },
+
+    { "iw3sp_mod_addr": "0x53537F", "kind": "HOOK_JUMP", "purpose": "Key_WriteBindings hook (config save)",
+      "iw3sp_mod_fn": "FUN_00535320 @ 0x535320+0x5F",
+      "iw3mp_fn_entry": "0x4FFAB0", "iw3mp_addr": "0x4FFB0F", "vt_status": "accepted",
+      "vt_algo": "Combined Function and Data Reference Match", "vt_score": 1.000, "vt_conf": 1710.984,
+      "_note": "Very high confidence (1710.984) -- strongest match in the set.",
+      "gamepad_cpp_line": 2281 },
+
+    { "iw3sp_mod_addr": "0x5653CA", "kind": "HOOK_JUMP", "purpose": "UI_RefreshStub (menu mouse-bypass)",
+      "iw3sp_mod_fn": "FUN_00565360 @ 0x565360+0x6A",
+      "iw3mp_fn_entry": null, "iw3mp_addr": null, "vt_status": "no_match",
+      "vt_algo": null, "vt_score": null, "vt_conf": null,
+      "_note": "UI_Refresh not matched. Needs alternate matching.",
+      "gamepad_cpp_line": 2319 },
+
+    { "iw3sp_mod_addr": "0x56F728", "kind": "HOOK_JUMP", "purpose": "Key_SetBinding hook #1",
+      "iw3sp_mod_fn": "FUN_0056f690 @ 0x56F690+0x98",
+      "iw3mp_fn_entry": "0x552920", "iw3mp_addr": "0x5529B8", "vt_status": "accepted",
+      "vt_algo": "Exact Function Instructions Match", "vt_score": 1.000, "vt_conf": 10.000,
+      "gamepad_cpp_line": 2325 },
+
+    { "iw3sp_mod_addr": "0x56F73B", "kind": "HOOK_JUMP", "purpose": "Key_SetBinding hook #2",
+      "iw3sp_mod_fn": "FUN_0056f690 @ 0x56F690+0xAB",
+      "iw3mp_fn_entry": "0x552920", "iw3mp_addr": "0x5529CB", "vt_status": "accepted",
+      "vt_algo": "Exact Function Instructions Match", "vt_score": 1.000, "vt_conf": 10.000,
+      "gamepad_cpp_line": 2326 },
+
+    { "iw3sp_mod_addr": "0x56F753", "kind": "HOOK_JUMP", "purpose": "Key_SetBinding hook #3",
+      "iw3sp_mod_fn": "FUN_0056f690 @ 0x56F690+0xC3",
+      "iw3mp_fn_entry": "0x552920", "iw3mp_addr": "0x5529E3", "vt_status": "accepted",
+      "vt_algo": "Exact Function Instructions Match", "vt_score": 1.000, "vt_conf": 10.000,
+      "gamepad_cpp_line": 2327 },
+
+    { "iw3sp_mod_addr": "0x594913", "kind": "HOOK_CALL", "purpose": "IN_Frame hook (root XInput poll)",
+      "iw3sp_mod_fn": "FUN_00594880 @ 0x594880+0x93",
+      "iw3mp_fn_entry": "0x576100", "iw3mp_addr": "0x576193", "vt_status": "accepted",
+      "vt_algo": "Implied Match + Stage2Finish.java byte verify (LIKELY)", "vt_score": 1.000, "vt_conf": 8.000,
+      "_note": "Promoted from implied: 24 mnemonics identical, sizes 335 vs 338 close (only ~1% diff). prefixBytes=0 because head has relocated CALL targets, but structural fingerprint matches. CRITICAL: root of XInput polling -- trust offset 0x93.",
+      "gamepad_cpp_line": 2305 },
+
+    { "iw3sp_mod_addr": "0x5947A8", "kind": "HOOK_JUMP + Nop(9)", "purpose": "CL_MouseEvent_Stub",
+      "iw3sp_mod_fn": "(unattributed code block in gap 0x594729..0x5947F0)",
+      "iw3mp_fn_entry": null, "iw3mp_addr": null, "vt_status": "needs_manual",
+      "vt_algo": "Stage2FinishV2.java gap analysis", "vt_score": null, "vt_conf": null,
+      "_note": "V2 confirmed: 0x5947A8 sits in a gap between iw3sp prev function ending ~0x594729 and next function 0x5947F0 -- Ghidra never created a function here. Disassembly at 0x5947A8: MOV ECX,[ESP+0x14]; CALL 0x43F920; ADD ESP,0xC; TEST EAX,EAX; MOV [0x13E3FEC],EAX; JZ 0x5947E0. So 0x43F920 is the callee (likely IN_MouseEvent equivalent at ~CL_MouseMove-0xD0). To find iw3mp equivalent: locate iw3mp's equivalent of 0x43F920, find its single caller-block, hook the equivalent of +0x8 (relative to call site).",
+      "gamepad_cpp_line": "2311-2312" }
+  ],
+  "summary": {
+    "total_hooks": 19,
+    "accepted_high_confidence": 17,
+    "function_only_needs_offset": 1,
+    "no_match": 2,
+    "needs_manual": 1,
+    "matched_functions": 13,
+    "unmatched_functions": 2,
+    "unmatched_function_list": [
+      "FUN_004f92a0 (0x4F92D7 = Player_UseEntity) -- 22 insns, no strings/named callees -> cannot disambiguate among 11 same-size MP candidates",
+      "FUN_00565360 (0x5653CA = UI_RefreshStub) -- only generic string 'pregame', 10 size-matched candidates"
+    ],
+    "stage2_finish_results": {
+      "v1_script": "tools/ghidra-projects/Stage2Finish.java",
+      "v1_log":    "tools/ghidra-projects/Stage2Finish.log",
+      "v2_script": "tools/ghidra-projects/Stage2FinishV2.java",
+      "v2_log":    "tools/ghidra-projects/Stage2FinishV2.log",
+      "implied_verified_LIKELY_promoted_to_accepted": [
+        "0x533B50 -> 0x4FDC80 (21-byte prefix, 24 mnem identical)",
+        "0x594880 -> 0x576100 (24 mnem identical, sizes 335 vs 338) -- IN_Frame critical"
+      ],
+      "implied_REJECTED_then_REINSTATED_by_V2": [
+        "0x443D60 -> 0x467EB0 CL_KeyEvent (V2 confirmed via 5/5 strings shared; V1 byte reject was register-allocation diff)"
+      ],
+      "still_REJECTED_after_V2": [
+        "0x4F92A0 -> 0x4EAAD0 Player_UseEntity (no strings; sizes 86 vs 107 too different)"
+      ],
+      "nomatch_discovered_by_fingerprint_V1": [
+        "0x409FD0 -> 0x4237B0 function (4/4 strings shared) -- offset 0xE0 INVALID, needs byte search",
+        "0x43FA90 -> 0x463490 CL_MouseMove (insn count exact 270)"
+      ],
+      "discovered_by_caller_search_V2": [
+        "0x4402B0 -> 0x463D10 CL_MouseMove_Stub host; hook site 0x463D70 (call to CL_MouseMove)"
+      ],
+      "still_unresolved": [
+        "0x40A0B0 reload-hint: need byte-pattern search inside iw3mp 0x4237B0 for sequence '20 60 68 00 E8 ?? ?? ?? ?? 8B 0D ?? ?? ?? ?? EB'",
+        "0x4F92A0 Player_UseEntity: no string/callee fingerprint; manual decomp comparison needed",
+        "0x565360 UI_Refresh: 10 size-matched candidates; manual decomp comparison needed",
+        "0x5947A8 CL_MouseEvent_Stub: sits in iw3sp gap; calls 0x43F920; locate iw3mp equivalent of 0x43F920 first"
+      ]
+    },
+    "next_steps": [
+      "Optional Stage 2.5: byte-pattern scan inside iw3mp 0x4237B0 for the reload-hint instruction; one-shot disassembly+caller-trace for 0x43F920 -> iw3mp twin to resolve 0x5947A8",
+      "Proceed to Stage 3 port using the 17 accepted hooks. Player_UseEntity (context-sensitive use) and UI_RefreshStub (menu mouse bypass) are non-critical for first playable controller build -- defer to Stage 3.5",
+      "Reload-hint offset is a polish-tier feature (toggle reload string when no ammo) -- non-blocking for Stage 3"
+    ]
+  }
+}

@@ -321,3 +321,83 @@ session, possibly two if the live-MP test reveals timing issues.
 _Status when this file was written: Phase 3-B complete (commit
 00b37c4, verified by user). Phase 3-C not started. Awaiting user
 review of this plan + answers to section 12 before code begins._
+
+---
+
+## 13. Phase 3-C.4 crash + root cause (2026-05-28) -- ARCHITECTURAL
+
+### Timeline
+1. First hook attempt: `GP_HOOK_CALL(0x463D70, gp_cl_mousemove)` using
+   the **raw** `SetCall`. **Crash on launch** -- root cause: CoD4x's
+   `SetCall`/`SetJump` do NOT self-unprotect `.text`; they assume the
+   caller is inside `Patch_MainModule`'s VirtualProtect window. Our
+   hook installs from `IN_StartupGamepads` (outside that window).
+   **Fix:** added self-unprotecting `Patch_SetCall`/`Patch_SetJump`
+   in `sys_patch.c`; pointed `GP_HOOK_CALL/JUMP` macros at them.
+   Launch fixed.
+2. Second attempt (self-unprotect fix in): launches fine, menus fine,
+   but **crashes in-match when moving the controller**.
+
+### Root cause (proven by WER + disassembly)
+- WER Application-error log: `Faulting module iw3mp.exe, exc
+  0xC0000005, offset 0x000635CB` -> VA `0x4635CB`, INSIDE the engine's
+  `CL_MouseMove` (0x463490 + 0x13B). The crash is in engine code, not
+  our DLL.
+- **iw3mp's `CL_MouseMove` is `__usercall`, not `__cdecl`.** The sole
+  caller (0x463D70 -- verified the ONLY call/jump ref to 0x463490)
+  sets up:
+  ```
+  0x463D6D: PUSH EDI        ; arg2 = cmd   (stack)
+  0x463D6E: MOV  EAX, ESI   ; arg1 = client (EAX)
+  0x463D70: CALL 0x463490
+  0x463D7D: ADD  ESP, 4     ; caller cleans 1 stack arg
+  ```
+  Entry reads EAX: `MOV EDI, EAX`. The movement path does
+  `IMUL EDI,EDI,0x258 ; ... CMP [EDI+0xB0]` -- i.e. EAX is the local
+  client index used to index the client array.
+- Our `__cdecl` hook clobbered EAX before forwarding to 0x463490, so
+  the engine indexed the client array with garbage -> wild pointer ->
+  fault at 0x4635CB. The fault only triggers on the movement code path
+  (non-zero stick/mouse delta), which is exactly why it crashed "only
+  when moving" and why menus/idle were fine.
+- Why iw3sp_mod didn't hit this: SP's `CL_MouseMove` (0x43FA90) has one
+  implicit client, no EAX arg, so iw3sp_mod's `__cdecl(usercmd_s*)`
+  was correct for SP. **MP added a client arg in EAX** -- an
+  SP-vs-MP ABI difference.
+
+### Fix (no asm)
+- `gp_cl_mousemove` declared `__attribute__((regparm(1)))` with
+  signature `(int client, gp_usercmd_t *cmd)`. GCC's regparm(1) places
+  arg1 in EAX, arg2 on the stack, caller-cleaned -- exactly iw3mp's
+  convention. The fallback forwards `(client, cmd)` so EAX is preserved
+  into the original CL_MouseMove. `gp_cl_gamepadmove` is unchanged (it
+  needs only `cmd`).
+- Builds clean; deployed SHA `258A8C07...` (diagnostic build prints
+  `client=` too). Awaiting in-match move test.
+
+## 14. ARCHITECTURAL RULE for ALL future hooks (Stage 3-D / 3-E)
+
+**iw3mp uses `__usercall` (register args, commonly EAX as the first
+arg) for many engine functions.** A hook that assumes `__cdecl` will
+silently clobber a register arg and crash inside the engine -- often on
+a delayed/conditional code path (as here: only on movement), making it
+look unrelated to the hook.
+
+**MANDATORY before installing any new engine hook:**
+1. Disassemble BOTH the call site (what regs/stack are set up before
+   the CALL) AND the callee entry (which regs it reads before writing).
+   Reuse `DumpCallSite.java` / `DumpMouseMoveCallers.java` patterns.
+2. Confirm whether args are in EAX/ECX/EDX (regparm/usercall) or purely
+   on the stack (cdecl/stdcall), and who cleans the stack (caller =
+   cdecl/regparm; callee `RET n` = stdcall/thiscall).
+3. Match the C declaration's convention to the engine's:
+   - args fully on stack, caller-cleaned -> `__cdecl`
+   - first arg(s) in EAX(/EDX/ECX), caller-cleaned -> `__attribute__((regparm(N)))`
+   - callee-cleaned stack -> `__attribute__((stdcall))`
+   - genuinely custom (e.g. ECX `this` + odd cleanup) -> naked asm
+     trampoline.
+4. For hooks that REPLACE a `CALL` and may forward to the original,
+   forward with the SAME convention so every register arg is preserved.
+
+This must appear in the PR documentation as a known engineering
+constraint of porting SP (iw3sp) hooks to MP (iw3mp).

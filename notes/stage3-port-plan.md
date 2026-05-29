@@ -337,6 +337,8 @@ Stage 3B. Not part of Stage 3 — a separate stage with its own plan.
 | CoD4x already registers a cvar that collides with an iw3sp_mod one (e.g. `gpad_enabled`) | **low** | Pre-search `CoD4x_Client_pub/src/` for each of the 29 names; rename ours with `cl_` prefix where collision exists (already do this for the 7 Stage 3A cvars) |
 | `IN_Frame_Hk` collides with the existing CoD4x `IN_StartupGamepads` integration in `win_input.c` | **medium** | Stage 3A's `IN_GamepadsMove` call from `win_input.c` will be replaced by the new `IN_Frame_Hk` patch at `0x576193`; keep the existing C function as the body until 3-B is verified, then move logic into the hook |
 | Mod-tools changes UI bindings before menus exist | **low** | Phase 4 strictly after Phase 3 done |
+| **Engine fn uses `__usercall` (register args) -- a `__cdecl` hook clobbers them and crashes inside the engine** | **HIGH / CONFIRMED** | **PROVEN in Phase 3-C.4:** iw3mp `CL_MouseMove` takes its first arg (client index) in EAX. Our `__cdecl` hook clobbered EAX, faulting at 0x4635CB only on the movement path. Fix: `__attribute__((regparm(1)))`. **MANDATORY for every future hook: disassemble call site + callee entry, match the calling convention (cdecl / regparm(N) / stdcall / naked asm), forward with the same convention. See stage3c-port-plan.md section 14.** |
+| Self-unprotect: CoD4x `SetCall`/`SetJump` are raw (no VirtualProtect) | **CONFIRMED** | Hooks install from `IN_StartupGamepads`, outside `Patch_MainModule`'s unprotect window -> raw write faults. Use `Patch_SetCall`/`Patch_SetJump` (added Phase 3-C.4); GP_HOOK_* macros already route through them. |
 
 ## 6. Time estimate
 

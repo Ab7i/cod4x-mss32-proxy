@@ -3,7 +3,106 @@
 Updated after every execution step. Purpose: never again confuse
 "code presented for review" with "code actually built & deployed".
 
-_Last updated: 2026-05-27, after Phase 3-C.1+3-C.2 verified -- Phase 3-C.4 (hook install) pending._
+_Last updated: 2026-05-28, after Phase 3-C complete (clean build, awaiting final smoke-test before commit)._
+
+## Phase 3-C COMPLETE (2026-05-28) -- analog movement + working look
+
+**Result:** controller analog movement (left stick) + look (right stick)
+work together in MP, zero crash, zero regression. Reached via four
+architectural fixes, each diagnosed from hard evidence:
+
+1. **Self-unprotecting patch** -- CoD4x's raw `SetCall`/`SetJump` write
+   `.text` directly and assume the caller is inside `Patch_MainModule`'s
+   VirtualProtect window. Our hook installs from `IN_StartupGamepads`
+   (outside it) -> launch crash. Fix: added `Patch_SetCall`/
+   `Patch_SetJump` (self-unprotect) in `sys_patch.c`; `GP_HOOK_CALL/JUMP`
+   route through them.
+2. **regparm(1) calling convention** -- iw3mp's `CL_MouseMove` is
+   `__usercall`: arg1 (client index) in EAX, arg2 (cmd) on the stack.
+   Our `__cdecl` hook clobbered EAX -> forwarded a garbage client index
+   -> engine faulted at 0x4635CB on the movement code path (only when
+   moving). Proven via WER event log (iw3mp.exe +0x635CB, 0xC0000005)
+   + disassembly of the single call site (0x463D70) and callee entry
+   (0x463490). Fix: declare `gp_cl_mousemove` and the forward typedef
+   `__attribute__((regparm(1)))` with `(int client, gp_usercmd_t*)`.
+3. **Hybrid look (Option A)** -- right-stick look was dead at legacy=0
+   because `gp_cl_gamepadmove` bypassed `CL_MouseMove`, orphaning the
+   `CL_MouseEvent` accumulator that `Gamepad_ApplyRightStick` fills
+   (the actual view-rotation lives in the deferred aim-assist/turn-rate
+   branch that writes `clientActive.viewangles`). Fix: dispatcher calls
+   the original `CL_MouseMove` for the look, THEN `gp_cl_gamepadmove`
+   for movement (forwardmove/rightmove only). pitchmove/yawmove dropped
+   -- they return in Stage 3-D with the viewangles turn-rate port.
+4. **Left-stick gate** -- `Gamepad_ApplyLeftStick` (arrow-key movement)
+   now fires only when `cl_gamepad_legacy_sticks==1`, so legacy=0 does
+   not double-apply movement on top of the analog usercmd path.
+   `Gamepad_ApplyRightStick` stays unconditional (look source in both
+   modes).
+
+**Behavior:**
+- `cl_gamepad_legacy_sticks 1` (DEFAULT): identical to Phase 3-B
+  (CL_MouseEvent look + arrow-key movement). Safe fallback.
+- `cl_gamepad_legacy_sticks 0`: analog usercmd movement + CL_MouseMove
+  look. User opts in manually.
+
+**Files changed in Phase 3-C (uncommitted, awaiting final smoke-test):**
+- `sys_patch.{c,h}` -- Patch_SetCall / Patch_SetJump.
+- `gamepad_hooks.h` -- macros route through the self-unprotect variants.
+- `gamepad_internal.h` -- gp_usercmd_t, axesValues[], regparm(1)
+  prototype + convention note, Phase 3-C externs.
+- `gamepad_move.c` (NEW) -- movement writer + dispatcher (regparm(1),
+  hybrid).
+- `gamepad.c` -- 2 cvars (cl_gamepad_legacy_sticks default 1,
+  cl_gamepad_invert_pitch), hook install, left-stick gate.
+- `CMakeLists.txt` -- + src/gamepad_move.c.
+
+**Clean build deployed (debug Printf removed):** SHA
+`0F4DCA2C9F725F45CED0D959B36E736CBD42F728E6765B11596E81F5587DD880`,
+size 2,627,584. Verified "hook fired" string absent from the DLL.
+
+**Backups:** `.dead-safe` (B92F94BB, pre-hook), `.phase3c4-regparm-ok`
+(258A8C07, look dead), `.phase3c-hybrid-debug` (6FD3B31B, working +
+debug Printf), current = clean.
+
+**`cl_gamepad_invert_pitch`** is registered but DORMANT in the hybrid
+(look goes through CL_MouseMove, which uses cl_gamepad_invert_y via the
+Stage 3A right-stick path). It returns to active duty in Stage 3-D when
+look moves to the usercmd/viewangles path.
+
+**Architectural docs:** stage3c-port-plan.md sections 13-14 + the master
+stage3-port-plan.md risk register record the __usercall + self-unprotect
+constraints as MANDATORY pre-checks for every future hook (Stage 3-D/3-E).
+
+**Final clean build (no Printf) smoke-tested by user: PASS.** Committed
+as `22eb6b4` (CoD4x_Client_pub), tag `phase3c-complete`. Deployed SHA
+`0F4DCA2C...587DD880`.
+
+## Roadmap re-ordered (2026-05-28, user decision)
+
+Priority driven by user need (controller in the main menu) + risk:
+
+1. ✅ **Phase 3-C** complete (analog movement + hybrid look).
+2. 🔄 **Phase 3-E NEXT** — BUTTON_* engine integration + bindings +
+   key-name table + menu navigation. Solves the controller-in-menu
+   problem. Hooks involved (from address map, all `accepted`):
+   keyName table ptrs (0x4676F0+0x8D/+0x95, 0x4677C0+0x77),
+   GetLocalizedKeyName calls (0x4677C0+0x6F, 0x475DC0+0x91),
+   Key_GetCommandAssignment (0x4678E0), Key_WriteBindings (0x4FFB0F),
+   Key_SetBinding x3 (0x5529B8/CB/E3), CL_KeyEvent (0x467EB0),
+   CL_KeyEvent_Hk (0x4FDCBF). NOTE: each needs the same calling-
+   convention pre-check (disassemble call site + entry) that Phase
+   3-C taught us -- several are HOOK_JUMP mid-function and will need
+   naked-asm trampolines (iw3sp_mod uses __declspec(naked) for them).
+3. ⏳ **Phase 4** — Menu UI: separate Gamepad settings page + presets
+   + `cl_gamepad_aimassist` cvar as a UI toggle (no effect yet).
+4. ⏳ **Phase 3.5** — 3 deferred hooks (Player_UseEntity,
+   UI_RefreshStub, reload-hint offset, CL_MouseEvent_Stub 0x5947A8).
+5. ⏳ **Phase 3-D LAST** — Aim Assist: port the AimAssist_* subsystem
+   (476 lines) + clientActive.viewangles turn-rate (restores the
+   usercmd-native look + pitchmove/yawmove + cl_gamepad_invert_pitch),
+   activates the Phase 4 toggle. Heaviest engine-ABI work; done last
+   so the playable controller ships first.
+6. ⏳ **Phase 5** — Community PR.
 
 ## CoD4x_Client_pub (controller work -- active)
 
@@ -413,6 +512,82 @@ after the new path is smoke-tested in a live MP match.
 
 **No need to re-read:** `gamepad.cpp` from iw3sp_mod-ref (already
 ported), Stage 2 binary-diff artifacts (already consumed).
+
+## Phase 3-C.4 build + deploy (2026-05-28)
+
+**Design correction vs the resume brief:** the brief's one-line
+`GP_HOOK_JUMP(0x463D70, gp_cl_mousemove)` was WRONG -- a raw JMP into a
+`__cdecl` function at a CALL site crashes (no return address pushed, so
+`cmd` is misread at `[esp+4]` and `ret` pops `cmd` as the return
+target). iw3sp_mod doesn't do that either: its `HOOK_JUMP` target is the
+`__declspec(naked)` trampoline `CL_MouseMove_Stub` (Gamepad.cpp:2079),
+`call CL_MouseMove; jmp callsite+5`. Reviewer (second Claude) confirmed
+the stack analysis on all three points. So 3-C.4 implements the
+trampoline, not a direct jump.
+
+**Address confirmations (pre-build):**
+- `IW3MP_CL_MOUSEMOVE_STUB_JMP` = `0x463D70` (gamepad_internal.h:342 +
+  address-map JSON line 73 -- the CALL site).
+- `IW3MP_CL_MOUSEMOVE_FN` = `0x463490` (gamepad_internal.h:313 + JSON
+  line 29 -- engine entry, stays clean for the dispatcher's fallback).
+- trampoline return = `0x463D70 + 5 = 0x463D75` (no C macro for it; the
+  `.asm` defines `CL_MOUSEMOVE_CALLSITE 0x463D70` and computes `+5`
+  inline, so no bare magic number).
+
+**Files written:**
+- NEW `src/gamepad_stubs.asm` -- `gp_cl_mousemove_stub` naked trampoline
+  (`call gp_cl_mousemove; mov eax, CL_MOUSEMOVE_CALLSITE+5; jmp eax`).
+  `extern gp_cl_mousemove`, `global gp_cl_mousemove_stub`, no leading
+  underscore (NASM `--prefix _` adds it). GPL-3/AGPL-3 header.
+
+**Files modified:**
+- `CMakeLists.txt` -- +1 line (`src/gamepad_stubs.asm` in the ASM list).
+- `src/gamepad.c` -- `#include "gamepad_hooks.h"`, `extern void
+  gp_cl_mousemove_stub(void);`, and a one-shot-guarded
+  `GP_HOOK_JUMP(IW3MP_CL_MOUSEMOVE_STUB_JMP, gp_cl_mousemove_stub)` at
+  the end of `IN_StartupGamepads()` (guard because IN_StartupGamepads
+  re-runs on every `\in_restart` -- re-patch is idempotent but the guard
+  is explicit).
+
+**Build config change (forced):** prior cache was
+`OFFICIAL_BUILD=ON`, but any CMakeLists edit forces a reconfigure, which
+re-runs the `OFFICIAL` FetchContent of the PRIVATE
+`git@github.com:callofduty4x/client-auth.git`. Offline this fails
+(`Host key verification failed`) and the failed git-clone WIPED the
+previously-fetched `_deps/client-auth-{src,build}`. Per user decision
+(2026-05-28: "we work offline; the client maintainer handles anything
+online; I test offline only") the build is now **`OFFICIAL_BUILD=OFF`**.
+Implication: live/official-server auth is out of scope here; offline +
+local/private MP only. To restore official builds later, re-fetch
+client-auth with working SSH access to the callofduty4x org.
+
+**Build (2026-05-28):** clean rebuild (`--clean-first`) via MinGW/CMake,
+exit 0, 0 new warnings (only the pre-existing `_Direct3DCreate9@4`
+stdcall-fixup). `gamepad_stubs.asm.obj` compiled; the `extern
+gp_cl_mousemove_stub` resolved at link -> NASM symbol decoration
+correct.
+- New SHA256
+  `C7380DD3600C8A43C6E6A970C1B4E3A4B6DE4AB70B7FC4FB68DDEA5D3C6770A9`.
+- Size **2,627,584 B -- identical to the 3-C.1+.2 baseline** (trampoline
+  + hook-install code fit in PE alignment slack). The byte-identical
+  size also suggests the prior `OFFICIAL=ON` builds were effectively
+  building without client-auth all along, so the offline OFF build is
+  functionally close to what was being tested -- content differs (SHA
+  changed) only marginally.
+- **Backup:** `cod4x_021.dll.phase3c4-pre` = the 3-C.1+.2 binary
+  (`B92F94BB...`, 2,627,584 B). The `.phase3c1-pre` (Phase 3-B
+  fallback) remains intact.
+
+**NOT committed** (per user). `cl_gamepad_legacy_sticks` default
+**stays 1** -- the new analog path is dormant until the user flips it
+to 0 in-game.
+
+**Pending: user smoke-test** (the 5-step sequence in the resume brief):
+launch -> `\cl_gamepad 1`, press a button (inUse=true) -> legacy=1 still
+drives view via Stage 3A CL_MouseEvent -> `\cl_gamepad_legacy_sticks 0`
+should switch to the new `cmd->yaw/pitch/forward/rightmove` path (raw
+linear feel, smooth analog movement) -> flip back to 1 = Stage 3A ->
+offline/local-MP only (no live official-server test this build).
 
 ## Stage 3B -- CoD4 Mod Tools (toolchain proven)
 

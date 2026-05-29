@@ -3,7 +3,41 @@
 Updated after every execution step. Purpose: never again confuse
 "code presented for review" with "code actually built & deployed".
 
-_Last updated: 2026-05-28, after Phase 3-C complete (clean build, awaiting final smoke-test before commit)._
+_Last updated: 2026-05-28, after Phase 3-E.2 verified + committed; 3-E.3 planning next._
+
+## Phase 3-E progress (2026-05-28)
+
+Roadmap: full chain (user decided slice insufficient -- CoD4 MP menus
+need real engine-keynum integration). Order: 3-E.1 -> 3-E.2 -> 3-E.3
+-> 3-E.4 -> 3-E.5 -> 3-E.6.
+
+- **3-E.1 (inUse tracking) -- DONE + committed (72d1241).** Wrapped
+  CoD4x's Com_EventLoop SE_KEY dispatch (common.c:472) with
+  `gp_cl_keyevent`: clears inUse=false for keyboard/mouse keys, passes
+  K_JOY1..16 through. The iw3mp 0x4FDCBF hook was SUPERSEDED (CoD4x owns
+  the key loop) -- wrapped at source instead. Verified.
+- **3-E.2 (keyName table) -- DONE + committed (1fb1053).** New
+  `gamepad_keys.c`: combined table (95 stock copied at runtime + 16
+  gamepad + null), `Patch_SetPtr` x3 on the engine reverse-lookup
+  operands (0x46777D/85, 0x467837 -- pre-flight confirmed all == 0x726F48),
+  + `gp_keynum_to_name` fallback wired into CoD4x's reimplemented
+  `Key_KeynumToString` (cl_keys.c). Verified: "111 entries installed",
+  `bind BUTTON_A` accepted, forward display shows BUTTON_A not 0x01.
+  - **Conflict found + handled:** CoD4x reimplements Key_KeynumToString
+    (hardcoded 0x726F48), so the engine Set patches only cover the
+    reverse lookup; forward display needed the cl_keys.c fallback. Two
+    consumers, two owners.
+  - **Timing caveat (deferred to 3-E.4):** gp_install_keynames runs in
+    IN_StartupGamepads, AFTER config exec -- so a `bind BUTTON_A` saved
+    in config_mp.cfg may not resolve on next launch (binding lost).
+    Fix = move the keyname install earlier, in 3-E.4.
+- **Deployed:** SHA D112EDDAC042C72FC7F794E847AD1E7288696E4AC865B2DA7C60C89D655BC7D0,
+  size 2,629,632. Backups: .phase3e1-verbose (480B28AE),
+  .phase3e1-clean (8D563CC7).
+
+- **3-E.3 (Key_GetCommandAssignment) -- PLANNING NEXT.** First naked-asm
+  trampoline. __usercall (EAX=localClientNum). Touches engine
+  `playerKeys` (per iw3sp_mod). See notes/stage3e3-key-getassignment.md.
 
 ## Phase 3-C COMPLETE (2026-05-28) -- analog movement + working look
 

@@ -35,9 +35,32 @@ need real engine-keynum integration). Order: 3-E.1 -> 3-E.2 -> 3-E.3
   size 2,629,632. Backups: .phase3e1-verbose (480B28AE),
   .phase3e1-clean (8D563CC7).
 
-- **3-E.3 (Key_GetCommandAssignment) -- PLANNING NEXT.** First naked-asm
-  trampoline. __usercall (EAX=localClientNum). Touches engine
-  `playerKeys` (per iw3sp_mod). See notes/stage3e3-key-getassignment.md.
+- **3-E.3 (Key_GetCommandAssignment) -- DONE + committed (e2d6978).**
+  First naked-asm trampoline (gamepad_stubs.asm) installed at iw3mp
+  0x4678E0. C reimpl in gamepad_keys.c reads engine playerKeys via
+  CoD4x's keys.h (0x8F1CA0) -- no new ABI reverse-engineering. Engine
+  keynum ranges (BUTTON_A=0x1..DPAD_RIGHT=0x17) used. Console log
+  "Gamepad bind hooks installed (Key_GetCommandAssignment @ 0x4678E0)"
+  on startup. `bind BUTTON_A` accepted; reverse lookup returns the
+  controller binding. Verified, no crash.
+  - Hazard noted: a stray `*/` inside `BUTTON_* / DPAD_*` comments
+    closes the C comment block -> "unknown type name 'DPAD_'" compile
+    error. Hit it twice (3-E.2 and 3-E.3); now in the project's known
+    pitfalls list.
+  - Path A tension persists: `bind BUTTON_A` won't fire from a
+    physical press (we still emit K_JOY1). Lookup foundation is in
+    place; activation needs 3-E.4b (migration).
+
+- **3-E.4 (Key_SetBinding x3) -- PLANNING NOW.** 3 HOOK_JUMP sites in
+  `Key_SetBinding` host 0x552920: 0x5529B8, 0x5529CB, 0x5529E3. Pre-flight
+  (DumpKeySetBinding.java) confirmed all three are clean 5-byte
+  `CALL 0x4678b0` with iw3sp_mod-matching register setup (ECX/EAX x2,
+  EDX/ECX/EAX x1). Plan splits into:
+  - **3-E.4a:** the 3 stubs + Hk + early install (persistence
+    timing fix).
+  - **3-E.4b:** K_JOY -> engine keynum migration (separate sub-phase
+    with `cl_gamepad_legacy_input` toggle).
+  See notes/stage3e4-key-setbinding.md.
 
 ## Phase 3-C COMPLETE (2026-05-28) -- analog movement + working look
 

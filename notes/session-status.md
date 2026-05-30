@@ -51,16 +51,27 @@ need real engine-keynum integration). Order: 3-E.1 -> 3-E.2 -> 3-E.3
     physical press (we still emit K_JOY1). Lookup foundation is in
     place; activation needs 3-E.4b (migration).
 
-- **3-E.4 (Key_SetBinding x3) -- PLANNING NOW.** 3 HOOK_JUMP sites in
-  `Key_SetBinding` host 0x552920: 0x5529B8, 0x5529CB, 0x5529E3. Pre-flight
-  (DumpKeySetBinding.java) confirmed all three are clean 5-byte
-  `CALL 0x4678b0` with iw3sp_mod-matching register setup (ECX/EAX x2,
-  EDX/ECX/EAX x1). Plan splits into:
-  - **3-E.4a:** the 3 stubs + Hk + early install (persistence
-    timing fix).
-  - **3-E.4b:** K_JOY -> engine keynum migration (separate sub-phase
-    with `cl_gamepad_legacy_input` toggle).
-  See notes/stage3e4-key-setbinding.md.
+- **3-E.4a (Key_SetBinding hooks x3) -- DONE + committed (0c5be14).**
+  3 naked-asm trampolines in gamepad_stubs.asm (stub01/02 identical
+  pattern, stub03 with EDX). HOOK_CALL via Patch_SetCall (cleaner than
+  iw3sp_mod's HOOK_JUMP for these CALL sites: engine's CALL push gives
+  us the jump-back automatically, stubs end with plain `ret`). All 3
+  forward to engine inner binder (0x4678b0) -- the SAME function the
+  original CALLs targeted, so no Ghidra resolve was needed. Hk in
+  gamepad_keys.c flips `gpad_buttonConfig` to "custom" for gamepad
+  keynums (BUTTON_*/DPAD_*). Verified: cvar flips on `bind BUTTON_A`,
+  JOY1 binds unaffected.
+  - Persistence timing (cfg-exec-before-install) is still open --
+    moving the install to Com_Init is the 3-E.5 task.
+- **3-E.4b (K_JOY -> engine keynum migration) -- PLANNING NOW.**
+  Replaces the dispatch table in gamepad_buttons.c so a physical A
+  press emits GAME_K_BUTTON_A (0x1) instead of K_JOY1 (~207). Gated
+  by new `cl_gamepad_legacy_input` cvar (default 1 = Phase 3-B
+  behavior; 0 = engine keynums for the full chain to "wake up"). The
+  moment `bind BUTTON_A` actually fires from a physical press -- AND
+  the engine UI handler finally sees the right keynums in menus
+  (potentially solving the 3-E.0 menu-nav problem). ~1 session, no
+  asm. See notes/stage3e4b-input-migration.md.
 
 ## Phase 3-C COMPLETE (2026-05-28) -- analog movement + working look
 
